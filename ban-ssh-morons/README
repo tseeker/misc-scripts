@@ -1,0 +1,24 @@
+Ban SSH bruteforce bots
+========================
+
+This script maintains a blacklist based on repeated SSH log-in failures. I wrote
+this after getting 800MB of authentication failure logs in one day on a home DSL
+so the measures it takes are somewhat extreme.
+
+The script normally runs in the background, reading /var/log/auth.log every
+minute. When it detects 5 failed attempts from the same source, it will add an
+iptables rule dropping all packets from that address. All addresses are also
+added to a file and the iptables blacklist restored when it runs.
+
+It is also possible to run the script with a specific input file. In this case
+it will not fork to the background; it will load the file, find offending
+entries, blacklist them, and exit. This allows the script to be "seeded" using
+old logs.
+
+
+Notes:
+ 1/ Blacklist entries are *never* removed automatically.
+ 2/ Updating the iptables blacklist is not efficient.
+ 3/ If you want to customise the paths and various parameters, you need to
+	modify the script ("our $WHATEVER" variables).
+ 4/ ban-ssh-morons.initd is an init script for Debian Squeeze.

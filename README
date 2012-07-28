@@ -1,5 +1,6 @@
 This repo contains various scripts which I figure could be useful to someone.
 
 	backup/		A set of backup scripts
+	ban-ssh-morons/	A "SSH bruteforce attempts to iptables blacklist" daemon
 
 License: WTFPL (http://sam.zoy.org/wtfpl/)
