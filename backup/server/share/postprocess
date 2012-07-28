@@ -1,0 +1,179 @@
+#!/bin/bash
+
+#
+# An example post-processing script
+#
+# This script runs in parallel to the main backup script (once the actual
+# data fetching is completed, the main script will wait for the post-processing
+# script to complete).
+#
+# It uses openssl to encrypt backup archives, then sends them to a remote FTP
+# server using kermit; backups of type "full" (i.e. root filesystems) will not
+# be processed.
+#
+
+[ -z "$1" ] && exit 1
+echo $$ >"$1/pid"
+
+source /etc/backup.conf
+source "${BACKUP_CONFS}/post/ftp-access.conf"
+
+if ! [ -f "${BACKUP_CONFS}/post/crypto.key" ]; then
+	echo "ERROR: no cryptographic key"
+	exit 1
+fi
+
+
+function crypt
+{
+	openssl enc -kfile "${BACKUP_CONFS}/post/crypto.key" -aes-256-cbc -e
+}
+
+
+function makeFTPScript
+{
+	local script=`mktemp`
+	chmod 600 $script
+	{
+		echo "set ftp passive-mode off"
+		echo "ftp open $ftp_host /user:$ftp_user /password:$ftp_pass"
+		echo "if fail exit 1 Connection failed"
+		echo 'if not \v(ftp_loggedin) exit 1 Login failed'
+		for cmd in "$@"; do
+			if [[ "$cmd" =~ ^lcd\  ]]; then
+				echo "$cmd"
+			else
+				echo "ftp $cmd"
+				echo "if fail exit 1 ftp $cmd: \\v(ftp_message)"
+			fi
+		done
+		echo "ftp bye"
+		echo "exit 0"
+	} > $script
+	echo $script
+}
+
+
+function executeKermitScript
+{
+	local script="$1"
+	local dest="$2"
+
+	wermit + < $script > $dest 2>/dev/null
+	local result=$?
+	rm -f "$script"
+	return $result
+}
+
+
+function fileExists
+{
+	local file="$1"
+	local script=`makeFTPScript "check $file"`
+	local output=`mktemp`
+	if ! executeKermitScript "$script" $output; then
+		if grep -q '^ftp check ' $output; then
+			echo "no"
+		else
+			echo "error"
+		fi
+	else
+		echo "yes"
+	fi
+	rm -f "$output"
+}
+
+
+function rotateRemoteFilesFor
+{
+	local host="$1"
+	local btype="$2"
+
+	local commands=()
+	local fnum=
+	for fnum in $( seq $ftp_rotate -1 1 ); do
+		local fname="/encrypted-${host}-${btype}-$fnum.tar.gz"
+		local fe=`fileExists "$fname"`
+		if [ "x$fe" = "xerror" ]; then
+			echo "FTP check error for $fname"
+			exit 1;
+		elif [ "x$fe" = "xyes" ]; then
+			local ncommand=
+			if [ $fnum -eq $ftp_rotate ]; then
+				ncommand="delete $fname"
+			else
+				ncommand="rename $fname /encrypted-${host}-${btype}-$(( $fnum + 1 )).tar.gz"
+			fi
+			commands=( "${commands[@]}" "$ncommand" )
+		fi
+	done
+	[ ${#commands[@]} -eq 0 ] && return 0
+
+	local temp=`mktemp`
+	executeKermitScript `makeFTPScript "${commands[@]}"` "$temp"
+	local rv=$?
+	rm -f "$temp"
+	return $rv
+}
+
+
+function putRemoteFileFor
+{
+	local host="$1"
+	local btype="$2"
+	local tempdir="$3"
+
+	if ! rotateRemoteFilesFor "$host" "$btype"; then
+		return 1;
+	fi
+
+	local temp=`mktemp`
+	executeKermitScript `makeFTPScript "lcd $tempdir" "put encrypted-${host}-${btype}-1.tar.gz"` $temp
+	local rv=$?
+	rm -f "$temp"
+
+	return $rv
+}
+
+
+
+function handleFile
+{
+	local host="$1"
+	local btype="$2"
+
+	if [ "x$btype" = "xfull" ]; then
+		return
+	fi
+
+	echo -e "\tCopying data for $host / $btype to FTP server" >&2
+
+	local tempdir="`mktemp -d`"
+	local src="${BACKUP_TARGET}/${host}/${btype}-1.tar.gz"
+	local dest="$tempdir/encrypted-${host}-${btype}-1.tar.gz"
+	cat "$src" | crypt > $dest
+
+	putRemoteFileFor $host $btype $tempdir
+
+	rm -rf "$tempdir"
+}
+
+
+function initPost
+{
+	echo "======================================================"
+	echo "POST-PROCESSING BACKUPS"
+	echo
+}
+
+function finishPost
+{
+	echo
+}
+
+
+initPost
+while read host btype; do
+	handleFile $host $btype 2>&1
+done
+finishPost

@@ -1,0 +1,441 @@
+#!/bin/bash
+
+
+MODE="$1"
+[ "x$MODE" = "x" ] && exit 1
+
+source /etc/backup.conf
+if ! [ -d "$BACKUP_TARGET" ]; then
+	echo "missing target directory $BACKUP_TARGET"
+	exit 1
+fi
+
+
+function checkMode
+{
+	local tocheck="$1"
+	local mode=
+	for mode in `grep -v '^#' "${BACKUP_CONFS}/modes.conf" | awk '{ print $1 }'`; do
+		[ "x$mode" = "x$tocheck" ] && return
+	done
+	exit 1
+}
+
+
+function checkType
+{
+	local tocheck="$1"
+	local btype=
+	for btype in `grep -v '^#' "${BACKUP_CONFS}/types.conf" | awk '{ print $1 }'`; do
+		[ "x$btype" = "x$tocheck" ] && return 0
+	done
+	return 1
+}
+
+
+function getHosts
+{
+	grep -v '^#' "${BACKUP_CONFS}/hosts.conf" | awk '{ print $1 }'
+}
+
+
+function printHostHeader
+{
+	local host="$1"
+	local id=
+	local name=
+
+	grep '^'"$host" "${BACKUP_CONFS}/hosts.conf" | while read id name; do
+		if [ "x$id" = "x$host" ]; then
+			echo "$name (identifier: $id)";
+			break;
+		fi
+	done
+}
+
+
+function getBackupTypes
+{
+	local mode="$1"
+	local host="$2"
+	local cmode=
+	local chost=
+	local ctypes=
+	local ctype=
+	grep -v '^#' "${BACKUP_CONFS}/modes.conf" | while read cmode chost ctypes; do
+		if [ "x$cmode" != "x$mode" ] && [ "x$cmode" != "x*" ]; then
+			continue;
+		fi
+
+		if [ "x$chost" != "x$host" ] && [ "x$chost" != "x*" ]; then
+			continue;
+		fi
+
+		echo "$ctypes" | sed -e 's/,/ /g'
+	done
+}
+
+
+function getTypeName
+{
+	local btype="$1"
+	local ctype=
+	local crot=
+	local cdir=
+	local cdesc=
+
+	grep '^'"$btype" "${BACKUP_CONFS}/types.conf" | while read ctype crot cdir cdesc; do
+		if [ "x$ctype" != "x$btype" ]; then
+			continue;
+		fi
+		echo "$cdesc"
+		break
+	done
+}
+
+
+function getTypeRotation
+{
+	local btype="$1"
+	local ctype=
+	local crot=
+	local cdir=
+	local cdesc=
+
+	grep '^'"$btype" "${BACKUP_CONFS}/types.conf" | while read ctype crot cdir cdesc; do
+		if [ "x$ctype" != "x$btype" ]; then
+			continue;
+		fi
+		echo "$crot"
+		break
+	done
+}
+
+
+function getTypeDirectory
+{
+	local btype="$1"
+	local ctype=
+	local cdir=
+	local crot=
+	local cdesc=
+
+	grep '^'"$btype" "${BACKUP_CONFS}/types.conf" | while read ctype crot cdir cdesc; do
+		if [ "x$ctype" != "x$btype" ]; then
+			continue;
+		fi
+		echo "$cdir"
+		break
+	done
+}
+
+
+function getTypeExcludes
+{
+	local btype="$1"
+	local host="$2"
+	local etype=
+	local ehost=
+	local edir=
+
+	grep -v '^#' "${BACKUP_CONFS}/exclude.conf" | while read etype ehost edir; do
+		if [ "x$etype" != "x$btype" ]; then
+			continue;
+		fi
+
+		if [ "x$ehost" != "x$host" ] && [ "x$ehost" != "x*" ]; then
+			continue;
+		fi
+
+		echo "$edir"
+	done
+}
+
+
+function getFetchMode
+{
+	local host="$1"
+	local fhost=
+	local fmode=
+	local fparams=
+
+	grep '^'"$host" "${BACKUP_CONFS}/fetch-hosts.conf" | while read fhost fmode fparams; do
+		if [ "x$fhost" = "x$host" ]; then
+			echo $fmode;
+			break;
+		fi
+	done
+}
+
+
+function getFetchScript
+{
+	local mode="$1"
+	local fmode=
+	local fscript=
+	local fparams=
+
+	grep '^'"$mode" "${BACKUP_CONFS}/fetch-modes.conf" | while read fmode fscript fparams; do
+		if [ "x$mode" = "x$fmode" ]; then
+			echo "$fscript";
+			break;
+		fi
+	done
+}
+
+
+function fetchData
+{
+	local fetchmode="$1"
+	local fetchscript="$2"
+	local host="$3"
+	local btype="$4"
+	local fetchconf="$5"
+
+	if ! [ -d "$BACKUP_TARGET/$host" ]; then
+		mkdir "$BACKUP_TARGET/$host"
+	fi
+
+	local logfile="`mktemp`"
+	chmod 600 "$logfile"
+
+	local tempfile="`mktemp`"
+	chmod 600 "$tempfile"
+
+	(
+		if [ -f "${BACKUP_CONFS}/fetch/$fetchmode.conf" ]; then
+			source "${BACKUP_CONFS}/fetch/$fetchmode.conf"
+		fi
+
+		if [ -f "${BACKUP_CONFS}/fetch/$fetchmode/$host.conf" ]; then
+			source "${BACKUP_CONFS}/fetch/$fetchmode/$host.conf"
+		fi
+
+		source "$fetchconf"
+		source "${BACKUP_SCRIPTS}/fetch-$fetchscript"
+		FETCH || exit 1
+	) 2>$logfile | gzip -5 > "$tempfile"
+
+	cat "$logfile"
+	if grep -q 'ERROR' $logfile; then
+		echo -e "\t\t\tBackup files will not be rotated"
+		echo "$host" >>"$ERROR_FILE"
+		rm -f "$tempfile"
+	else
+		if [ $btrot -gt 1 ]; then
+			echo -e "\t\t\tRotating files ..."
+			for index in $( seq $btrot -1 2 ); do
+				local previous=$(( $index - 1 ))
+				if ! [ -f "$BACKUP_TARGET/$host/$btype-$previous.tar.gz" ]; then
+					continue;
+				fi
+				/bin/mv -f "$BACKUP_TARGET/$host/$btype-$previous.tar.gz" \
+					"$BACKUP_TARGET/$host/$btype-$index.tar.gz"
+			done
+		fi
+		/bin/mv -f "$tempfile" "$BACKUP_TARGET/$host/$btype-1.tar.gz"
+		echo -e "\t\t\tBackup completed"
+		echo "$host $btype" >&3
+	fi
+	rm -f "$logfile"
+}
+
+
+function executeBackupType
+{
+	local btype="$1"
+	local host="$2"
+
+	if ! checkType "$btype"; then
+		echo -e "\tCONFIGURATION ERROR: unknown type '$btype'";
+		echo "$host" >>"$ERROR_FILE"
+		return 1
+	fi
+
+	local btname="`getTypeName "$btype"`"
+	local btrot="`getTypeRotation "$btype"`"
+	echo -e "\t$btname ($btype)"
+
+	local btdir="`getTypeDirectory "$btype"`"
+	local btexclude=( `getTypeExcludes "$btype" "$host"` )
+	local fetchmode="`getFetchMode "$host"`"
+	local fetchscript="`getFetchScript "$fetchmode"`"
+	local index=
+
+	echo -e "\t\tDirectory:\t\t$btdir"
+	for index in $( seq 0 $(( ${#btexclude[@]} - 1 )) ); do
+		echo -e "\t\tExcluded directory:\t${btexclude[$index]}"
+	done
+	echo -e "\t\tFetching:\t\tmode $fetchmode, script $fetchscript"
+
+	if [ -f "${BACKUP_SCRIPTS}/fetch-$fetchscript" ]; then
+		echo -e "\t\tStarting backup..."
+		local fetchconf="`mktemp`"
+		chmod 600 "$fetchconf"
+		{
+			echo "backup_directory=\"$btdir\""
+			echo 'backup_exclude=()'
+			for index in $( seq 0 $(( ${#btexclude[@]} - 1 )) ); do
+				echo 'backup_exclude['$index']="'"${btexclude[$index]}"'"'
+			done
+		} > "$fetchconf"
+		fetchData "$fetchmode" "$fetchscript" "$host" "$btype" "$fetchconf"
+		rm -f "$fetchconf"
+	else
+		echo -e "\t\tCONFIGURATION ERROR: unknown fetch script '$fetchscript'"
+		echo
+		echo "$host" >>"$ERROR_FILE"
+		return 1
+	fi
+
+	echo
+}
+
+
+function backupHost
+{
+	local mode="$1"
+	local host="$2"
+
+	local types=( `getBackupTypes "$mode" "$host"` )
+	if [ ${#types[*]} -eq 0 ]; then
+		return
+	fi
+
+	echo "======================================================"
+	echo
+	printHostHeader "$host"
+	echo
+
+	local index=
+	for index in $( seq 0 $(( ${#types[@]} - 1 )) ); do
+		local btype="${types[$index]}"
+		executeBackupType "$btype" "$host"
+	done
+	echo
+	echo
+}
+
+
+function backupHosts
+{
+	local mode="$1"
+	local hosts=( `getHosts` )
+	local index=
+
+	for index in $( seq 0 $((${#hosts[@]} - 1)));
+	do
+		local host="${hosts[$index]}"
+		backupHost "$mode" "$host"
+	done
+}
+
+
+function computeTime
+{
+	local total=$(( $2 - $1 ))
+	date -u -d "@$total" +'%d %H %M %S' | sed -e 's/ 0/ /g' | (
+		read day hour minutes seconds;
+		echo $(( $day - 1 ))' day(s), '$hour' hour(s), '$minutes' minute(s) and '$seconds' second(s)'
+	)
+}
+
+
+function getNextLogFile
+{
+	local base="$BACKUP_LOG/`date +'%Y-%m-%d'`"
+	local counter=1
+	while [ -f "$base-$counter.log" ]; do
+		counter=$(( $counter + 1 ))
+	done
+	echo "$base-$counter.log"
+}
+
+
+checkMode "$MODE"
+
+if [ -f "${BACKUP_SCRIPTS}/postprocess" ]; then
+	PP_DIR=`mktemp -d`
+	chmod 700 $PP_DIR
+	mkfifo -m 600 "$PP_DIR/pp_fifo"
+	bash "${BACKUP_SCRIPTS}/postprocess" "$PP_DIR" <"$PP_DIR/pp_fifo" >"$PP_DIR/log" 2>&1 &
+	exec 3>"$PP_DIR/pp_fifo"
+else
+	exec 3>/dev/null
+fi
+
+
+ERROR_FILE="`mktemp`"
+chmod 600 "$ERROR_FILE"
+LOG_FILE="`mktemp`"
+chmod 600 "$LOG_FILE"
+START_FULL="`date +'%Y-%m-%d %H:%M:%S'`"
+START_TS="`date +'%s'`"
+
+backupHosts "$MODE" >$LOG_FILE 2>&1
+END_FULL="`date +'%Y-%m-%d %H:%M:%S'`"
+END_TS="`date +'%s'`"
+
+if [ -f "${BACKUP_SCRIPTS}/postprocess" ] && [ -f "$PP_DIR/pid" ]; then
+	PP_PID=`cat $PP_DIR/pid`
+	exec 3>&-
+	while [ -e "/proc/$PP_PID" ]; do
+		sleep 1
+	done
+	PP_FULL="`date +'%Y-%m-%d %H:%M:%S'`"
+	PP_TS="`date +'%s'`"
+fi
+
+FINAL_LOG=`getNextLogFile`
+exec 7>&1 >$FINAL_LOG
+if [ -z "`cat $ERROR_FILE`" ]; then
+	echo "Successful backup."
+	TAG="BACKUP"
+else
+	echo "BACKUP FAILURE!"
+	echo
+	echo "The following hosts encountered errors:"
+	for host in `cat "$ERROR_FILE" | sort | uniq`; do
+		echo -e "\t* $host"
+	done
+	TAG="BACKUP-FAILURE"
+fi
+
+if [ -f "${BACKUP_SCRIPTS}/postprocess" ] && [ -f "$PP_DIR/log" ] && grep -q ERROR "$PP_DIR/log"; then
+	echo "There were errors during post-processing."
+	if [ "$TAG" = "BACKUP" ]; then
+		TAG="BACKUP-WARNING"
+	fi
+fi
+
+spent="`computeTime "$START_TS" "$END_TS"`"
+totsize="`du -sh ${BACKUP_TARGET} | awk '{ print $1 }'`"
+latestsize="`du -sch ${BACKUP_TARGET}/*/*-1.tar.gz | tail -n 1 | awk '{ print $1 }'`"
+freesize="`df -Ph ${BACKUP_TARGET} | tail -n 1 | awk '{ print $4 }'`"
+echo "Full log below."
+echo
+echo "======================================================"
+echo "STATISTICS"
+echo -e "\tStarted:\t\t$START_FULL"
+echo -e "\tEnded:\t\t\t$END_FULL"
+if [ -f "${BACKUP_SCRIPTS}/postprocess" ] && [ -f "$PP_DIR/log" ]; then
+	echo -e "\tBackup time:\t\t$spent"
+	echo -e "\tPost-processing ended:\t$PP_FULL"
+	spent="`computeTime "$START_TS" "$PP_TS"`"
+fi
+echo -e "\tTotal time:\t\t$spent"
+echo -e "\tTotal size:\t\t$totsize"
+echo -e "\tLatest:\t\t\t$latestsize"
+echo -e "\tFree space:\t\t$freesize"
+echo
+cat "$LOG_FILE"
+if [ -f "${BACKUP_SCRIPTS}/postprocess" ] && [ -f "$PP_DIR/log" ]; then
+	echo
+	cat "$PP_DIR/log"
+	rm -rf "$PP_DIR"
+fi
+exec 1>&7 7>&-
+
+cat "$FINAL_LOG" | mail -s "[$TAG] - $BACKUP_NAME - `date +'%Y-%m-%d'` - $MODE mode" $BACKUP_EMAIL
+
+rm -f "$ERROR_FILE" "$LOG_FILE"

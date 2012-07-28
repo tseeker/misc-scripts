@@ -1,0 +1,55 @@
+#!/bin/bash
+
+function FETCH
+{
+	if [ -z "$SSH_KEY" ]; then
+		echo -e "\t\t\tCONFIGURATION ERROR: no SSH key" >&2
+		exit 1
+	elif [ -z "$SSH_HOST" ]; then
+		echo -e "\t\t\tCONFIGURATION ERROR: no destination SSH host" >&2
+		exit 1
+	fi
+
+	local command="ssh -T"
+
+	if [ "x$SSH_USER" != "x" ]; then
+		command="$command -l $SSH_USER"
+	fi
+
+	if [ "x$SSH_PORT" != "x" ]; then
+		command="$command -p $SSH_PORT"
+	fi
+
+	command="$command -i $SSH_KEY $SSH_HOST echo"
+
+	local errorfile="`mktemp`"
+	chmod 600 "$errorfile"
+
+	{
+		echo "$backup_directory"
+		local index=
+		for index in $( seq 0 $(( ${#backup_exclude[@]} - 1 )) ); do
+			echo "${backup_exclude[$index]}"
+		done
+	} | eval $command 2>"$errorfile"
+
+	local nerrfile=`mktemp`
+	echo 0 > $nerrfile
+	cat $errorfile | while read line; do
+		if [[ "$line" =~ ^\.\.\.SRC\.\.\..*$ ]]; then
+			local text="`echo "$line" | sed -e 's/^.........//'`"
+			if [[ "$text" =~ ERROR ]]; then
+				echo 1 > $nerrfile;
+			fi
+			printf "\t\t\t%s\n" "$text" >&2
+		else
+			echo -e "\t\t\tCONNECTION ERROR: SSH or the remote script caused errors:" >&2
+			printf "\t\t\t\t%s\n" "$line" >&2
+			echo 1 > $nerrfile
+		fi
+	done
+	local rv="`cat $nerrfile`"
+	rm -f "$nerrfile" "$errorfile"
+	return $rv
+}
+

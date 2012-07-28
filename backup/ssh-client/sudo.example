@@ -1,0 +1,4 @@
+# Remote backup system, assuming the remote backup user is "rbackup" and
+# the script has been installed in /var/lib/rbackup
+#
+rbackup ALL= (root) NOPASSWD: /bin/bash /var/lib/rbackup/backup-client

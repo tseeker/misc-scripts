@@ -1,0 +1,107 @@
+Backup server scripts
+======================
+
+The scripts in this directory implement a backup "server". While quite
+primitive, it supports a rather flexible configuration and can be customised in
+various ways (e.g. support for new types of data fetching).
+
+
+Installation
+-------------
+
+1/ Copy the backup script to /usr/local/sbin
+2/ Copy the share/ directory to /usr/local/share/backup (omit the
+	"postprocess" script if you don't need it - see below for more info)
+3/ Copy backup.conf and backup.conf.d/ to /etc
+4/ Configure the server
+5/ Add cron jobs to execute backups (see crontab.example)
+
+
+Configuration
+--------------
+
+The main configuration file, backup.conf, defines a few variables. You need to
+modify some of these values for the system to function properly (e.g. title
+for backup reports, main archive storage location, and possibly the log
+directory). It also allows you to modify the location of the data fetching and
+postprocessing scripts, as well as the location of the rest of the
+configuration, should you need / want to do that.
+
+The main configuration files (backup.conf.d/*.conf) include some documentation.
+They are mostly self-explanatory, with the exception of the "fetch modes" thing.
+
+
+Fetch modes
+------------
+
+A "fetch mode" associates a data acquisition script (share/fetch-*) and a
+specific configuration for this script. Fetch modes must be listed in the
+backup.conf.d/fetch-modes.conf file. Hosts are then associated to a fetch mode.
+
+When the backup archives from a host need to be generated, the mode's
+configuration will be read from backup.conf.d/fetch/<name of the mode>.conf if
+it exists (otherwise defaults will be assumed). After that, the backup script
+also attempts to load backup.conf.d/<name of the mode>/<name of the host>.conf
+if it exists.
+
+Two fetch scripts are provided:
+
+	fetch-local	Fetch data from a mounted filesystem
+		BASE		Base directory for all "hosts"
+					Default: /
+		ROOT		Root directory of a host relative to the base
+					Default: /
+
+	fetch-ssh	Fetch data through SSH (see ../ssh-client/)
+		SSH_HOST	Host to connect to
+		SSH_KEY		Private key to use
+		SSH_PORT	Port to connect to
+					Default: 22
+		SSH_USER	User to log in as
+					Default: user running the server script
+
+
+Default postprocessing script
+------------------------------
+
+The default postprocessing script will encrypt all archives using a fixed key,
+and send them to some remote server using FTP.
+
+To enable the script, simply make sure the "share/postprocess" script is
+present and executable.
+
+The script's configuration includes the server's name or address, the
+credentials needed to log in, and the amount of remote rotations; in addition,
+a second file contains the encryption key.
+
+
+Customisation - Fetch scripts
+------------------------------
+
+Fetch scripts must be written in Bash and must define a function named "FETCH".
+The function will output the archive's data on its standard output; any error
+should be written to the standard error stream.
+
+When the function is called, all variables loaded from the fetch mode or host
+configuration files will be present, as well as the following variables:
+
+	backup_directory	The directory to backup, from types.conf
+	backup_exclude		An array of directories to exclude from the
+					resulting archive, as defined in
+					exclude.conf
+
+
+Customisation - Postprocessing
+-------------------------------
+
+The postprocessing script is launched by the main script when it starts. It
+will be passed the name of a temporary directory in which its data resides.
+
+The first thing a postprocessing script ought to do is create a file named "pid"
+in that directory, writing its ... PID ... into it (thank you, Captain Obvious!)
+
+The main script will then write a host name and backup type identifier whenever
+it finishes fetching an archive.
+
+Anything written to the standard output or standard error stream will end up in
+the main report.

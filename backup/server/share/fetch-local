@@ -1,0 +1,44 @@
+#!/bin/bash
+
+function FETCH
+{
+	local fetchroot="/"
+
+	if [ "x$BASE" != "x" ]; then
+		fetchroot="$fetchroot/$BASE"
+	fi
+
+	if [ "x$ROOT" != "x" ]; then
+		fetchroot="$fetchroot/$ROOT"
+	fi
+
+	fetchroot="`echo "$fetchroot" | sed -e 's/\/\+/\//g'`"
+	if ! [ -d "$fetchroot" ]; then
+		echo -e "\t\t\tCONFIGURATION ERROR: missing root directory '$fetchroot'" >&2
+		exit 1
+	fi
+	echo -e "\t\t\tRoot directory:\t$fetchroot" >&2
+
+	local tarerrors="`mktemp`"
+	chmod 600 "$tarerrors"
+
+	local command='tar --numeric-owner --one-file-system --ignore-failed-read --warning=none -c'
+	local index=
+	for index in $( seq 0 $(( ${#backup_exclude[@]} - 1 )) ); do
+		command="$command"' "--exclude='"`echo "./${backup_exclude[$index]}" | sed -e 's/\/\+/\//g' -e 's/\/$//'`"'"'
+	done
+	command="$command"' ".'"$backup_directory"'"'
+
+	cd "$fetchroot"
+	eval $command 2>"$tarerrors"
+	if ! [ -z "`cat $tarerrors`" ]; then
+		echo -e "\t\t\tFETCH ERROR: something went wrong while creating the archive:" >&2
+		echo -e "-----------------------------------------------------" >&2
+		cat "$tarerrors" >&2
+		echo -e "-----------------------------------------------------" >&2
+		rm -f "$tarerrors"
+		return 1
+	fi
+	rm -f "$tarerrors"
+	return 0
+}

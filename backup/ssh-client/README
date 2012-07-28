@@ -1,0 +1,31 @@
+Client-side scripts for SSH backup
+===================================
+
+The scripts in this directory are meant to be used with the backup server's SSH
+fetch script.
+
+
+Installation
+-------------
+
+1/ Create an user that uses the backup-user-shell as its shell and
+	/var/lib/rbackup as its home directory.
+2/ Authorize the server's SSH key (limiting the key to the backup server's
+	address is a good idea) to log in as that specific user
+3/ Authorize the backup user to run the main script as root (see sudo.example)
+
+If you want the archive sent to the backup server to be encrypted locally,
+write the encryption key in the /etc/rbackup-encryption-key file (mode 0600 for
+root). Otherwise, make sure the file does not exist.
+
+
+Notes
+------
+
+1/ If the backup server is compromised, then so is the system being backed up.
+
+2/ If you use local encryption (which would mitigate the problem described
+	above), make sure you have a copy of the key somewhere.
+
+3/ If you want to use something other than /var/lib/rbackup as the user's home
+	directory, you'll have to change the backup-user-shell script.

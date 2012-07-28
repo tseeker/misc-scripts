@@ -1,0 +1,56 @@
+#!/bin/bash
+
+function printToServer
+{
+	echo "...SRC...$*" >&2
+}
+
+function catToServer
+{
+	sed -e 's/^/...SRC.../' < "$1" >&2
+}
+
+read backup_directory
+
+if [ -z "$backup_directory" ]; then
+	printToServer "ERROR: no directory to backup"
+	exit 1
+else
+	backup_directory="`echo "/$backup_directory" | sed -e 's/\/\+/\//g' -e 's/\/$//'`"
+	if ! [ -d "$backup_directory" ]; then
+		printToServer "ERROR: missing directory $backup_directory"
+		exit 1
+	fi
+fi
+
+backup_exclude=( )
+while read backup_edir; do
+	backup_exclude=( ${backup_exclude[@]} $backup_edir )
+done
+
+
+command='ionice -c2 -n7 tar --numeric-owner --one-file-system --ignore-failed-read --warning=none -c'
+index=
+for index in $( seq 0 $(( ${#backup_exclude[@]} - 1 )) ); do
+	command="$command"' "--exclude='"`echo "./${backup_exclude[$index]}" | sed -e 's/\/\+/\//g' -e 's/\/$//'`"'"'
+done
+command="$command"' ".'"$backup_directory"'"'
+if [ -f "/etc/rbackup-encryption-key" ]; then
+	command="$command | nice -n20 openssl enc -kfile /etc/rbackup-encryption-key -aes-256-cbc -e"
+fi
+printToServer "Remote host ready"
+
+tarerrors="`mktemp`"
+chmod 600 "$tarerrors"
+cd /
+
+eval $command 2>"$tarerrors"
+if ! [ -z "`cat $tarerrors`" ]; then
+	printToServer "FETCH ERROR: something went wrong while creating the archive:" >&2
+	printToServer "-----------------------------------------------------" >&2
+	catToServer "$tarerrors"
+	printToServer "-----------------------------------------------------" >&2
+	rm -f "$tarerrors"
+	exit 1
+fi
+rm -f "$tarerrors"

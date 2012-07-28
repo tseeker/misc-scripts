@@ -1,0 +1,6 @@
+SHELL=/bin/sh
+PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+
+# m h dom mon dow user  command
+12 1 * * 0 root /usr/local/sbin/backup weekly
+12 1 * * 1-6 root /usr/local/sbin/backup daily
