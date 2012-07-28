@@ -1,0 +1,9 @@
+make-password.pl
+-----------------
+
+Generates a random password. Usage:
+
+	perl make-password.pl [simple] [<length>]
+
+"simple" indicates that the password should consist of alphanumeric characters
+only. If no length is specified, the default is 13.
