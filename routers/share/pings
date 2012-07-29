@@ -1,0 +1,29 @@
+#!/bin/bash
+
+try_ping()
+{
+	export target="$1"
+	export prfile="$2"
+	export endfile=`mktemp`
+	(
+		if ping -c1 $target >/dev/null 2>&1; then
+			rm -f $prfile
+		fi
+		rm -f $endfile
+	) >/dev/null 2>&1 &
+	echo $endfile
+}
+
+wait_pings()
+{
+	local ok=0
+	while [ "$ok" = "0" ]; do
+		sleep 1
+		ok=1
+		for file in $*; do
+			if [ -f "$file" ]; then
+				ok=0
+			fi
+		done
+	done
+}

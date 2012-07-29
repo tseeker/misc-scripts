@@ -1,0 +1,66 @@
+Redundant routers control
+==========================
+
+I'm using two Linux routers at home, along with a manageable switch and an ADSL
+modem.
+
+Both routers have their own address, and so does the switch. When one of the
+routers is active, it uses an additional address which serves as the default
+gateway for the rest of the boxes.
+
+One of the routers is an old box; it's rather slow, doesn't have much memory,
+and more importantly, it's dying. Obviously, it should only be used when the
+other one is down. However, if the connection has been established by that
+secondary router, the primary should not take over until the DSL link goes down
+on its own.
+
+The scripts in this directory are used to control which router is active.
+
+
+Checks on the primary router
+-----------------------------
+
+When the primary router is the active router:
+
+	1/ Check the switch
+	2/ If the switch is down, deactivate.
+
+When the primary router is inactive:
+
+	1/ Check the switch and the main router address
+	2/ If the switch is up and the main router does not exist, activate.
+
+
+Checks on the secondary router
+-------------------------------
+
+When the secondary router is the active router:
+
+	1/ Check the switch, the primary router, and a remote server
+	2/ If the remote server is reachable, do nothing
+	3/ If the switch is down, or if the primary router is up, deactivate.
+
+When the secondary router is inactive:
+
+	1/ Check the switch, the primary router, and the main router address
+	2/ If the switch is up, and both the primary router and the main router
+		address are down, activate.
+
+
+Installation
+-------------
+
+1/ Copy router-checks.conf to /etc, modify it however you want.
+
+2/ Copy share/ to /usr/local/share/router-checks (or to whatever you set the
+	LIB_DIR configuration variable to).
+
+3/ Modify activate.sh and deactivate.sh; they determine how a router becomes
+	the primary router and how a router releases primary routing control,
+	respectively.
+
+4/ Copy primary-router.sh or secondary-router.sh to
+	/usr/local/sbin/router-checks
+
+5/ If necessary (and if it will work on whatever distribution you use), use
+	the provided init script to start the checks on boot.
